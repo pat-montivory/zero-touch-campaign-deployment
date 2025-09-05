@@ -7,8 +7,8 @@ Wants=nginx.service
 Type=simple
 User=azureuser
 Group=www-data
-WorkingDirectory=/var/www/campaignmanagerv12/
-ExecStart=/bin/bash /var/www/campaignmanagerv12//scripts/campaign_monitor_daemon.sh
+WorkingDirectory=/var/www/campaignmanagerv12
+ExecStart=/bin/bash /var/www/campaignmanagerv12/scripts/campaign_monitor_daemon.sh
 ExecStop=/bin/kill -TERM $MAINPID
 Restart=always
 RestartSec=10
@@ -23,7 +23,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/www/campaignmanagerv12/
+ReadWritePaths=/var/www/campaignmanagerv12
 ReadWritePaths=/tmp
 
 # Allow nginx reload
