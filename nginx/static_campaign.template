@@ -1,0 +1,21 @@
+    # {{CAMPAIGN_NAME}} campaign - static PHP files
+    location ^~ /{{CAMPAIGN_NAME}}/ {
+        alias /home/azureuser/dev/campaignmanagerv12/campaigns/{{CAMPAIGN_NAME}}/;
+        try_files $uri $uri/ =404;
+        
+        location ~ \.php$ {
+            fastcgi_pass unix:/var/run/php/php8.4-fpm.sock;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+        }
+    }
+    
+    # {{CAMPAIGN_NAME}} campaign - static assets
+    location ~ ^/{{CAMPAIGN_NAME}}/(assets|css|js|images)/(.*)$ {
+        alias /home/azureuser/dev/campaignmanagerv12/campaigns/{{CAMPAIGN_NAME}}/;
+        
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
+        try_files /$1/$2 =404;
+        access_log off;
+    }

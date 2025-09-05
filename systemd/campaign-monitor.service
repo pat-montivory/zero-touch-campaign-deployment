@@ -1,0 +1,33 @@
+[Unit]
+Description=Campaign Monitor Daemon - Auto-deploy static campaigns
+After=network.target nginx.service
+Wants=nginx.service
+
+[Service]
+Type=simple
+User=azureuser
+Group=www-data
+WorkingDirectory=/home/azureuser/dev/campaignmanagerv12
+ExecStart=/bin/bash /home/azureuser/dev/campaignmanagerv12/scripts/campaign_monitor_daemon.sh
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/home/azureuser/dev/campaignmanagerv12
+ReadWritePaths=/tmp
+
+# Allow nginx reload
+SupplementaryGroups=sudo
+
+[Install]
+WantedBy=multi-user.target
