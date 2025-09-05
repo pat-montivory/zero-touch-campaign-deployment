@@ -186,9 +186,17 @@ generate_config() {
     log_info "Generating nginx configuration for: ${campaigns[*]}"
     
     if [[ "$SEPARATE" == true ]]; then
-        # Generate separate config files
+        # Generate separate config files with proper naming
         for campaign in "${campaigns[@]}"; do
-            local separate_config="$NGINX_DIR/${campaign}_static.conf"
+            local campaign_dir="$CAMPAIGNS_DIR/$campaign"
+            local config_type="static"
+            
+            # Determine config type
+            if [[ -f "$campaign_dir/composer.json" && -f "$campaign_dir/artisan" ]]; then
+                config_type="laravel"
+            fi
+            
+            local separate_config="$NGINX_DIR/${config_type}_${campaign}.conf"
             generate_campaign_config "$campaign" > "$separate_config"
             log_success "Generated separate config: $separate_config"
         done

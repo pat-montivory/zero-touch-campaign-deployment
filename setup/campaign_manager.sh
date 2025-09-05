@@ -11,6 +11,13 @@ NGINX_DIR="/var/www/campaignmanagerv12/nginx"
 CONFIG_FILE="$NGINX_DIR/campaignmanagerv12.conf"
 BACKUP_DIR="$NGINX_DIR/backups"
 
+# Permission settings
+DIR_PERMISSIONS="775"
+FILE_PERMISSIONS="664"
+EXEC_PERMISSIONS="775"
+WEB_USER="www-data"
+WEB_GROUP="www-data"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -41,6 +48,8 @@ usage() {
     echo "  status     - Show campaign status"
     echo "  list       - List available campaigns"
     echo "  backup     - Backup current configuration"
+    echo "  permissions - Set proper file and directory permissions"
+    echo "  debug      - Show detailed debug information"
     echo ""
     echo -e "${YELLOW}OPTIONS:${NC}"
     echo "  --campaign NAME    - Target specific campaign"
@@ -53,6 +62,8 @@ usage() {
     echo "  $0 detect --verbose"
     echo "  $0 deploy --campaign VisoPisesLiquidShop"
     echo "  $0 configure --separate-config"
+    echo "  $0 permissions --campaign knorrBackToSchool"
+    echo "  $0 debug --verbose"
     echo "  $0 status"
 }
 
@@ -83,7 +94,7 @@ SEPARATE_CONFIG=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        detect|deploy|configure|status|list|backup)
+        detect|deploy|configure|status|list|backup|permissions|debug)
             COMMAND=$1
             shift
             ;;
@@ -200,8 +211,19 @@ generate_config() {
         local campaign_dir="$CAMPAIGNS_DIR/$campaign"
         
         if [[ "$SEPARATE_CONFIG" == true ]]; then
-            # Create separate config file
-            local separate_config="$NGINX_DIR/${campaign}_static.conf"
+            # Create separate config file with proper naming format
+            local config_type=""
+            if [[ -f "$campaign_dir/index.php" ]]; then
+                config_type="static"
+            elif [[ -f "$campaign_dir/composer.json" && -f "$campaign_dir/artisan" ]]; then
+                config_type="laravel"
+            else
+                config_type="static"
+            fi
+            
+            local separate_config="$NGINX_DIR/${config_type}_${campaign}.conf"
+            [[ "$VERBOSE" == true ]] && log_info "Creating separate config: $separate_config"
+            
             cat > "$separate_config" << EOF
 # $campaign static website configuration
 
@@ -339,6 +361,234 @@ list_campaigns() {
     done
 }
 
+# Set proper permissions function
+set_permissions() {
+    log_info "${WRENCH} Setting proper file and directory permissions..."
+    
+    local campaigns=()
+    if [[ -n "$CAMPAIGN" ]]; then
+        campaigns=("$CAMPAIGN")
+    else
+        # Get all detected campaigns
+        detect_campaigns > /dev/null
+        campaigns=($DETECTED_CAMPAIGNS)
+    fi
+    
+    if [[ ${#campaigns[@]} -eq 0 ]]; then
+        log_warning "No campaigns found to set permissions"
+        return 0
+    fi
+    
+    for campaign in "${campaigns[@]}"; do
+        local campaign_dir="$CAMPAIGNS_DIR/$campaign"
+        
+        if [[ ! -d "$campaign_dir" ]]; then
+            log_warning "Campaign directory not found: $campaign_dir"
+            continue
+        fi
+        
+        log_info "Setting permissions for campaign: $campaign"
+        
+        if [[ "$DRY_RUN" == false ]]; then
+            # Set ownership
+            [[ "$VERBOSE" == true ]] && log_info "Setting ownership to $WEB_USER:$WEB_GROUP"
+            sudo chown -R "$WEB_USER:$WEB_GROUP" "$campaign_dir"
+            
+            # Set directory permissions (775)
+            [[ "$VERBOSE" == true ]] && log_info "Setting directory permissions to $DIR_PERMISSIONS"
+            find "$campaign_dir" -type d -exec chmod "$DIR_PERMISSIONS" {} \;
+            
+            # Set file permissions (664)
+            [[ "$VERBOSE" == true ]] && log_info "Setting file permissions to $FILE_PERMISSIONS"
+            find "$campaign_dir" -type f -exec chmod "$FILE_PERMISSIONS" {} \;
+            
+            # Set executable permissions for specific files
+            if [[ -f "$campaign_dir/artisan" ]]; then
+                chmod "$EXEC_PERMISSIONS" "$campaign_dir/artisan"
+            fi
+            
+            # Set special permissions for storage and cache directories (Laravel)
+            if [[ -d "$campaign_dir/storage" ]]; then
+                [[ "$VERBOSE" == true ]] && log_info "Setting Laravel storage permissions"
+                chmod -R 775 "$campaign_dir/storage"
+            fi
+            
+            if [[ -d "$campaign_dir/bootstrap/cache" ]]; then
+                chmod -R 775 "$campaign_dir/bootstrap/cache"
+            fi
+            
+            log_success "Permissions set for: $campaign"
+        else
+            log_info "[DRY RUN] Would set permissions for: $campaign"
+            echo "  - Directory permissions: $DIR_PERMISSIONS"
+            echo "  - File permissions: $FILE_PERMISSIONS"
+            echo "  - Owner: $WEB_USER:$WEB_GROUP"
+        fi
+    done
+    
+    log_success "Permission setting completed"
+}
+
+# Debug information function
+show_debug_info() {
+    log_info "${WRENCH} Gathering debug information..."
+    
+    echo "==================== SYSTEM INFORMATION ===================="
+    echo -e "${BLUE}System:${NC} $(uname -a)"
+    echo -e "${BLUE}Date:${NC} $(date)"
+    echo -e "${BLUE}User:${NC} $(whoami)"
+    echo -e "${BLUE}Working Directory:${NC} $(pwd)"
+    echo ""
+    
+    echo "==================== NGINX STATUS ===================="
+    if systemctl is-active --quiet nginx; then
+        echo -e "${GREEN}Nginx Status: Running${NC}"
+        echo -e "${BLUE}Version:${NC} $(nginx -v 2>&1)"
+        echo -e "${BLUE}Configuration Test:${NC}"
+        if sudo nginx -t 2>/dev/null; then
+            echo -e "  ${CHECK} Configuration is valid"
+        else
+            echo -e "  ${ERROR} Configuration has errors:"
+            sudo nginx -t 2>&1 | sed 's/^/    /'
+        fi
+    else
+        echo -e "${RED}Nginx Status: Not Running${NC}"
+    fi
+    echo ""
+    
+    echo "==================== PHP STATUS ===================="
+    if command -v php >/dev/null 2>&1; then
+        echo -e "${BLUE}PHP Version:${NC} $(php -v | head -1)"
+        echo -e "${BLUE}PHP-FPM Status:${NC}"
+        if systemctl is-active --quiet php8.4-fpm; then
+            echo -e "  ${CHECK} PHP-FPM is running"
+        else
+            echo -e "  ${ERROR} PHP-FPM is not running"
+        fi
+    else
+        echo -e "${RED}PHP not installed${NC}"
+    fi
+    echo ""
+    
+    echo "==================== DIRECTORY STRUCTURE ===================="
+    echo -e "${BLUE}Base Directory:${NC} /var/www/campaignmanagerv12"
+    if [[ -d "/var/www/campaignmanagerv12" ]]; then
+        echo -e "  ${CHECK} Directory exists"
+        ls -la /var/www/campaignmanagerv12 | head -10
+        if [[ $(ls /var/www/campaignmanagerv12 | wc -l) -gt 10 ]]; then
+            echo "  ... (truncated, $(ls /var/www/campaignmanagerv12 | wc -l) total items)"
+        fi
+    else
+        echo -e "  ${ERROR} Directory does not exist"
+    fi
+    echo ""
+    
+    echo -e "${BLUE}Campaigns Directory:${NC} $CAMPAIGNS_DIR"
+    if [[ -d "$CAMPAIGNS_DIR" ]]; then
+        echo -e "  ${CHECK} Directory exists"
+        local campaign_count=$(find "$CAMPAIGNS_DIR" -maxdepth 1 -type d | wc -l)
+        echo "  Total subdirectories: $((campaign_count - 1))"
+        if [[ "$VERBOSE" == true ]]; then
+            ls -la "$CAMPAIGNS_DIR"
+        fi
+    else
+        echo -e "  ${ERROR} Directory does not exist"
+    fi
+    echo ""
+    
+    echo -e "${BLUE}Nginx Directory:${NC} $NGINX_DIR"
+    if [[ -d "$NGINX_DIR" ]]; then
+        echo -e "  ${CHECK} Directory exists"
+        if [[ "$VERBOSE" == true ]]; then
+            ls -la "$NGINX_DIR"
+        fi
+    else
+        echo -e "  ${ERROR} Directory does not exist"
+    fi
+    echo ""
+    
+    echo "==================== CAMPAIGN ANALYSIS ===================="
+    detect_campaigns
+    
+    local campaigns=($DETECTED_CAMPAIGNS)
+    for campaign in "${campaigns[@]}"; do
+        local campaign_dir="$CAMPAIGNS_DIR/$campaign"
+        echo -e "${BLUE}Campaign:${NC} $campaign"
+        echo "  Path: $campaign_dir"
+        echo "  Size: $(du -sh "$campaign_dir" 2>/dev/null | cut -f1)"
+        
+        # Check key files
+        local key_files=("index.php" "index.html" "composer.json" "artisan" ".env")
+        for file in "${key_files[@]}"; do
+            if [[ -f "$campaign_dir/$file" ]]; then
+                echo "  ${CHECK} $file exists"
+            fi
+        done
+        
+        # Check permissions
+        local dir_perms=$(stat -c "%a" "$campaign_dir" 2>/dev/null)
+        local owner=$(stat -c "%U:%G" "$campaign_dir" 2>/dev/null)
+        echo "  Permissions: $dir_perms ($owner)"
+        
+        # Check accessibility
+        local url="https://devpayload.southeastasia.cloudapp.azure.com/$campaign/"
+        local status_code=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+        if [[ "$status_code" == "200" || "$status_code" == "302" ]]; then
+            echo -e "  ${CHECK} Accessible (HTTP $status_code)"
+        else
+            echo -e "  ${ERROR} Not accessible (HTTP $status_code)"
+        fi
+        echo ""
+    done
+    
+    echo "==================== NGINX CONFIGURATION ===================="
+    echo -e "${BLUE}Main Config:${NC} $CONFIG_FILE"
+    if [[ -f "$CONFIG_FILE" ]]; then
+        echo -e "  ${CHECK} Configuration file exists"
+        echo "  Size: $(wc -l < "$CONFIG_FILE") lines"
+        echo "  Last modified: $(stat -c "%y" "$CONFIG_FILE")"
+        
+        if [[ "$VERBOSE" == true ]]; then
+            echo ""
+            echo "Configuration preview (first 20 lines):"
+            head -20 "$CONFIG_FILE" | sed 's/^/    /'
+            echo "    ... (use --verbose for full content)"
+        fi
+    else
+        echo -e "  ${ERROR} Configuration file does not exist"
+    fi
+    echo ""
+    
+    echo -e "${BLUE}Separate Config Files:${NC}"
+    local separate_configs=($(find "$NGINX_DIR" -name "*_*.conf" 2>/dev/null))
+    if [[ ${#separate_configs[@]} -gt 0 ]]; then
+        for config in "${separate_configs[@]}"; do
+            echo "  ${CHECK} $(basename "$config")"
+        done
+    else
+        echo "  No separate configuration files found"
+    fi
+    echo ""
+    
+    echo "==================== TROUBLESHOOTING TIPS ===================="
+    echo "Common nginx config file naming examples:"
+    echo "  • static_VisoPisesLiquidShop.conf"
+    echo "  • laravel_knorrBackToSchool.conf" 
+    echo "  • static_unileverPromo.conf"
+    echo ""
+    echo "Debug commands:"
+    echo "  • nginx -t                    (test configuration)"
+    echo "  • systemctl status nginx      (check nginx status)"
+    echo "  • systemctl status php8.4-fpm (check PHP-FPM status)"
+    echo "  • tail -f /var/log/nginx/error.log (check error logs)"
+    echo ""
+    echo "Permission commands:"
+    echo "  • $0 permissions --campaign CAMPAIGN_NAME"
+    echo "  • chmod 775 directory_name"
+    echo "  • chmod 664 file_name"
+    echo "  • chown www-data:www-data directory_name"
+}
+
 # Main execution
 case $COMMAND in
     detect)
@@ -358,6 +608,12 @@ case $COMMAND in
         ;;
     backup)
         backup_config
+        ;;
+    permissions)
+        set_permissions
+        ;;
+    debug)
+        show_debug_info
         ;;
     *)
         log_error "Unknown command: $COMMAND"
